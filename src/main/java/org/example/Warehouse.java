@@ -1,17 +1,21 @@
 package org.example;
 
-import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
+import org.example.my.list.PolledList;
+import org.example.my.workers.Loader;
+import org.example.my.workers.Unloader;
 
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Log4j2
-@Getter
 public class Warehouse extends Thread {
 
-    private final List<Block> storage = new ArrayList<>();
+    private final PolledList<Block> storage = new PolledList<>();
+    private final PolledList<Truck> trucks = new PolledList<>();
+    private final Map<Long, Boolean> trucksStatus = new HashMap<>(); // true - грузовик загружен/ разгружен, false - ещё в процессе
 
     public Warehouse(String name) {
         super(name);
@@ -20,6 +24,10 @@ public class Warehouse extends Thread {
     public Warehouse(String name, Collection<Block> initialStorage) {
         this(name);
         storage.addAll(initialStorage);
+    }
+
+    public List<Block> getStorage() {
+        return storage.asList();
     }
 
     @Override
@@ -38,63 +46,40 @@ public class Warehouse extends Thread {
                 }
                 continue;
             }
+            // Параллельная загрузка/ выгрузка, после выполнения операции через коллбэк уведомляет ждущие грузовики о завершении операции
+            long threadId = truck.getId();
+            Runnable callback = () -> trucksStatus.put(threadId, true);
             if (truck.getBlocks().isEmpty()) {
-                loadTruck(truck);
+                new Loader(truck, getFreeBlocks(truck.getCapacity()), callback).start();
             } else {
-                unloadTruck(truck);
+                new Unloader(truck, storage, callback).start();
             }
         }
         log.info("Warehouse thread interrupted");
 
     }
 
-    private void loadTruck(Truck truck) {
-        log.info("Loading truck {}", truck.getName());
-        Collection<Block> blocksToLoad = getFreeBlocks(truck.getCapacity());
-        try {
-            sleep(10L * blocksToLoad.size());
-        } catch (InterruptedException e) {
-            log.error("Interrupted while loading truck", e);
-        }
-        truck.getBlocks().addAll(blocksToLoad);
-        log.info("Truck loaded {}", truck.getName());
-    }
-
     private Collection<Block> getFreeBlocks(int maxItems) {
-        //TODO необходимо реализовать потокобезопасную логику по получению свободных блоков
-        //TODO 1 блок грузится в 1 грузовик, нельзя клонировать блоки во время загрузки
-        List<Block> blocks = new ArrayList<>();
-        for (int i = 0; i < maxItems; i++) {
-            blocks.add(new Block());
-        }
-        return blocks;
-    }
-
-    private void returnBlocksToStorage(List<Block> returnedBlocks) {
-        //TODO реализовать потокобезопасную логику по возврату блоков на склад
-    }
-
-    private void unloadTruck(Truck truck) {
-        log.info("Unloading truck {}", truck.getName());
-        List<Block> arrivedBlocks = truck.getBlocks();
-        try {
-            sleep(100L * arrivedBlocks.size());
-        } catch (InterruptedException e) {
-            log.error("Interrupted while unloading truck", e);
-        }
-        returnBlocksToStorage(arrivedBlocks);
-        truck.getBlocks().clear();
-        log.info("Truck unloaded {}", truck.getName());
+        return storage.poll(maxItems);
     }
 
     private Truck getNextArrivedTruck() {
-        //TODO необходимо реализовать логику по получению следующего прибывшего грузовика внутри потока склада
-        return null;
+        return trucks.poll();
     }
 
-
     public void arrive(Truck truck) {
-        //TODO необходимо реализовать логику по сообщению потоку склада о том, что грузовик приехал
-        //TODO так же дождаться разгрузки блоков, при возврате из этого метода - грузовик покинет склад
+        long threadId = truck.getId();
+
+        trucks.add(truck);
+        trucksStatus.put(threadId, false);
+
+        // Ждём, пока завершится операция по загрузке/разгрузке грузовика
+        while (true) {
+            if (trucksStatus.getOrDefault(threadId, false)) {
+                trucksStatus.remove(threadId);
+                break;
+            }
+
+        }
     }
 }
