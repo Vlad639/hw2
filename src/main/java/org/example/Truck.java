@@ -16,6 +16,8 @@ public class Truck extends Thread {
 
     private final List<Block> blocks;
 
+    private volatile boolean isReadyToGo;
+
     private final Queue<Warehouse> routeList = new LinkedList<>();
 
     private final long travelTime = Math.round(Math.random() * 2000);
@@ -52,5 +54,9 @@ public class Truck extends Thread {
             log.error(e);
         }
         log.info("Arrived to warehouse: {}", warehouse.getName());
+    }
+
+    public void setReadyToGo(boolean readyToGo) {
+        isReadyToGo = readyToGo;
     }
 }

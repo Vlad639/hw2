@@ -6,16 +6,13 @@ import org.example.my.workers.Loader;
 import org.example.my.workers.Unloader;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Log4j2
 public class Warehouse extends Thread {
 
     private final PolledList<Block> storage = new PolledList<>();
     private final PolledList<Truck> trucks = new PolledList<>();
-    private final Map<Long, Boolean> trucksStatus = new HashMap<>(); // true - грузовик загружен/ разгружен, false - ещё в процессе
 
     public Warehouse(String name) {
         super(name);
@@ -47,8 +44,8 @@ public class Warehouse extends Thread {
                 continue;
             }
             // Параллельная загрузка/ выгрузка, после выполнения операции через коллбэк уведомляет ждущие грузовики о завершении операции
-            long threadId = truck.getId();
-            Runnable callback = () -> trucksStatus.put(threadId, true);
+            Truck finalTruck = truck;
+            Runnable callback = () -> finalTruck.setReadyToGo(true);
             if (truck.getBlocks().isEmpty()) {
                 new Loader(truck, getFreeBlocks(truck.getCapacity()), callback).start();
             } else {
@@ -68,18 +65,15 @@ public class Warehouse extends Thread {
     }
 
     public void arrive(Truck truck) {
-        long threadId = truck.getId();
-
         trucks.add(truck);
-        trucksStatus.put(threadId, false);
 
         // Ждём, пока завершится операция по загрузке/разгрузке грузовика
         while (true) {
-            if (trucksStatus.getOrDefault(threadId, false)) {
-                trucksStatus.remove(threadId);
+            if (truck.isReadyToGo()) {
                 break;
             }
-
         }
+
+        truck.setReadyToGo(false);
     }
 }
